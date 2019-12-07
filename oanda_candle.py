@@ -6,6 +6,7 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
 import pandas as pd
+import pymysql.cursors
 
 
 # ---------- Settings ----------
@@ -44,6 +45,13 @@ params = {
     "price": "B"
 }
 
+# MySQL settings
+host="localhost"
+user="fxpi"
+password="## fxpi's password ##"
+db="fx"
+charset="utf8mb4"
+
 
 # ----- Main routine -----
 
@@ -62,15 +70,45 @@ def request_data():
             # Print raw data
             # print(json.dumps(response, indent=4))
 
+            price = "bid" if params["price"] == "B" else "ask"
             for raw in response["candles"]:
                 data.append([
                     raw["time"],
                     response["instrument"],
-                    raw["bid"]["o"],
-                    raw["bid"]["h"],
-                    raw["bid"]["l"],
-                    raw["bid"]["c"]
+                    raw[price]["o"],
+                    raw[price]["h"],
+                    raw[price]["l"],
+                    raw[price]["c"]
                 ])
+
+            # DB connection
+            conn = pymysql.connect(
+                host=host,
+                user=user,
+                password=password,
+                db=db,
+                charset=charset,
+                cursorclass=pymysql.cursors.DictCursor
+            )
+
+            # Insert DB
+            try:
+                for raw in response["candles"]:
+                    with conn.cursor() as cursor:
+                        sql  = "INSERT INTO tbl_candle (time, instrument, open, high, low, close) "
+                        sql += "VALUES(%s, %s, %s, %s, %s, %s)"
+
+                        cursor.execute(sql, (
+                            raw["time"].replace("000Z", "").replace("T", " "),
+                            response["instrument"],
+                            raw[price]["o"],
+                            raw[price]["h"],
+                            raw[price]["l"],
+                            raw[price]["c"]
+                        ))
+                    conn.commit()
+            finally:
+                conn.close()
 
             # Wait 1 sec
             time.sleep(1)
@@ -79,12 +117,16 @@ def request_data():
             print("Error: {}".format(e))
 
     # Print formatted data
+    data_len = len(data)
+    if data_len == 0:
+        data.append([" ", "", "", "", "", ""])
     df = pd.DataFrame(data)
     df.columns = ["time", "instrument", "open", "high", "low", "close"]
     df = df.set_index("time")
-    df.index = pd.to_datetime(df.index)
+    if data_len > 0:
+        df.index = pd.to_datetime(df.index)
     print(df)
-    print("row(s) count: {}".format(len(data)))
+    print("row(s) count: {}".format(data_len))
 
 # Entry point
 while 1:
