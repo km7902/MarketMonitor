@@ -1,12 +1,14 @@
 import json
 import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pytz import timezone
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
 import pandas as pd
 import pymysql.cursors
+import requests
 
 
 # ---------- Settings ----------
@@ -52,6 +54,11 @@ password="## fxpi's password ##"
 db="fx"
 charset="utf8mb4"
 
+# LINE Notify settings
+line_url = "https://notify-api.line.me/api/notify"
+line_access_token = "## Your LINE Access Token ##"
+line_headers = {'Authorization': 'Bearer ' + line_access_token}
+
 
 # ----- Main routine -----
 
@@ -60,6 +67,7 @@ api = API(access_token=access_token, environment=environment)
 def request_data():
 
     data = []
+    line_message = ""
     for instrument in instrument_list:
         instruments_candles = instruments.InstrumentsCandles(instrument=instrument, params=params)
 
@@ -80,6 +88,21 @@ def request_data():
                     raw[price]["l"],
                     raw[price]["c"]
                 ])
+
+                # Difference high and low
+                diff = Decimal(raw[price]["h"]) - Decimal(raw[price]["l"])
+                print("{} {}: {}".format(
+                    raw["time"].replace("000Z", "").replace("T", " "),
+                    response["instrument"],
+                    diff
+                ))
+
+                if response["instrument"].find("_JPY") > -1:
+                    if diff >= 0.1:
+                        line_message += "'" + response["instrument"] + "' "
+                else:
+                    if diff >= 0.0015:
+                        line_message += "'" + response["instrument"] + "' "
 
             # DB connection
             conn = pymysql.connect(
@@ -115,6 +138,11 @@ def request_data():
 
         except V20Error as e:
             print("Error: {}".format(e))
+
+    # LINE Notify
+    if len(line_message) > 0:
+        line_payload = {"message": "There were signficant price fluctuations in " + line_message + "."}
+        r = requests.post(line_url, headers=line_headers, params=line_payload)
 
     # Print formatted data
     data_len = len(data)
